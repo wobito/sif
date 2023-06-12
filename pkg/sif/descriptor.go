@@ -17,6 +17,10 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/partial"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 )
 
 // rawDescriptor represents an on-disk object descriptor.
@@ -298,6 +302,43 @@ func (d Descriptor) SBOMMetadata() (SBOMFormat, error) {
 	}
 
 	return s.Format, nil
+}
+
+var errDescriptorNotFound = errors.New("descriptor not found")
+
+func DescriptorByDigest(ii v1.ImageIndex, h v1.Hash) (*v1.Descriptor, error) {
+	index, err := ii.IndexManifest()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, desc := range index.Manifests {
+		if desc.Digest == h {
+			return &desc, nil
+		}
+
+		//nolint:exhaustive
+		switch desc.MediaType {
+		case types.DockerManifestList, types.OCIImageIndex:
+			// Recursively check image index...
+			ii, err := ii.ImageIndex(desc.Digest)
+			if err != nil {
+				return nil, err
+			}
+
+			return DescriptorByDigest(ii, h)
+
+		case types.DockerManifestSchema2, types.OCIManifestSchema1:
+			img, err := ii.Image(desc.Digest)
+			if err != nil {
+				return nil, err
+			}
+
+			return partial.BlobDescriptor(img, h)
+		}
+	}
+
+	return nil, errDescriptorNotFound
 }
 
 // OCIBlobMetadata returns the media for a OCI blob object.

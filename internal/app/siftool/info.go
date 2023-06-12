@@ -15,7 +15,11 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	_ "crypto/sha256"
+
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/uuid"
+
 	"github.com/sylabs/sif/v2/pkg/sif"
 )
 
@@ -130,10 +134,28 @@ func writeList(w io.Writer, f *sif.FileImage) error {
 				fmt.Fprintf(w, "|%s (%s)\n", dt, f)
 			}
 
+		case sif.DataOCIRootIndex:
+			fi, err := psif.Load(f)
+			if err != nil {
+				fmt.Fprintf(w, "|%s\n", dt)
+			}
+
+			ii, err := fi.ImageIndex()
+			if err != nil {
+				fmt.Fprintf(w, "|%s\n", dt)
+			}
+
+			mt, err := ii.MediaType()
+			if err == nil {
+				fmt.Fprintf(w, "|%s (%s)\n", dt, mt)
+			}
+
 		case sif.DataOCIBlob:
 			t, err := d.OCIBlobMetadata()
+
+			err, mt := getMediaTypeFromDigest(f, t)
 			if err == nil {
-				fmt.Fprintf(w, "|%s (%s)\n", dt, t)
+				fmt.Fprintf(w, "|%s (%s)\n", dt, mt)
 			}
 
 		default:
@@ -144,6 +166,29 @@ func writeList(w io.Writer, f *sif.FileImage) error {
 	})
 
 	return nil
+}
+
+func getMediaTypeFromDigest(f *sif.FileImage, t string) (error, string) {
+	fi, err := psif.Load(f)
+	if err != nil {
+		return nil, t
+	}
+
+	ii, err := fi.ImageIndex()
+	if err != nil {
+		return nil, t
+	}
+
+	hash, err := v1.NewHash(t)
+	if err != nil {
+		return nil, t
+	}
+
+	de, err := psif.DescriptorByDigest(ii, hash)
+	if err != nil {
+		return nil, t
+	}
+	return err, string(de.MediaType)
 }
 
 // List displays a list of all active descriptors from a SIF file.
@@ -238,7 +283,7 @@ func writeInfo(w io.Writer, v sif.Descriptor) error {
 			return err
 		}
 
-		fmt.Fprintf(tw, "\tMedia Type:\t%s\n", t)
+		fmt.Fprintf(tw, "\tDigest:\t%s\n", t)
 	}
 
 	return tw.Flush()
